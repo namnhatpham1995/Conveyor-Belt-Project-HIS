@@ -1,11 +1,11 @@
 # Project HIS: Verifying Papyrus-RT Models with nuXmv (Project Summer Term 2020)
 ## Airport Conveyor Belt (Team 6)
-## Team 6's members: 
+### Team 6's members: 
 * Vo Duy Hieu
 * Pham Nhat Nam
 * Cao Minh Gia Huy
 * Dang Tong Ngoc
-### Description: 
+#### Description: 
 * Papyrus-RT is an open-source modelling tool based on the concept of Model-Driven Engineering and is capable of generating executable C++ codes. It is intended for designing and developing complex, real-time, embedded systems. The modeling component of Papyrus-RT offers UML-RT for specifying software systems. 
 * nuXmv on the other hand is a model checker, that can verify system models against a set of 
 properties defined using temporal logics. 
