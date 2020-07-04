@@ -1,6 +1,6 @@
 # Project HIS: Verifying Papyrus-RT Models with nuXmv (Project Summer Term 2020)
 ## Airport Conveyor Belt (Team 6)
-### Team 6's members: 
+##### Team 6's members: 
 * Vo Duy Hieu
 * Pham Nhat Nam
 * Cao Minh Gia Huy
