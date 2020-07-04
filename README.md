@@ -1,3 +1,4 @@
+## Frankfurt University of Applied Sciences
 # Project HIS: Verifying Papyrus-RT Models with nuXmv (Project Summer Term 2020)
 ## Airport Conveyor Belt (Team 6)
 ##### Team 6's members: 
@@ -6,6 +7,8 @@
 * Cao Minh Gia Huy
 * Dang Tong Ngoc
 #### Description: 
+This is the nuXmv model of a simple conveyor belt system with one main line and two induction lines. The model of the entire system is in the CBelt.smv file. Formal properties of the model are defined and verified using nuXmv model checker.
+Throughout the project, two programs are used:
 * Papyrus-RT is an open-source modelling tool based on the concept of Model-Driven Engineering and is capable of generating executable C++ codes. It is intended for designing and developing complex, real-time, embedded systems. The modeling component of Papyrus-RT offers UML-RT for specifying software systems. 
 * nuXmv on the other hand is a model checker, that can verify system models against a set of 
 properties defined using temporal logics. 
@@ -18,8 +21,6 @@ the following set of activities -
 nuXmv model. 
 4. verify this model against a set of system properties relevant for their example 
   
-Systems like the Airport Conveyer Belt, Car Door Lock, Car Air Bag, Human Pacemaker, Parcel 
-routing, Traffic Light or River Basin Management, could be chosen as an example for the 
-project.  
+
 
 Each team must submit a report, a presentation and their code for the final evaluation. 
