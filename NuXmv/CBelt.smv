@@ -1,0 +1,542 @@
+-- Conveyor Belt
+-- 
+-------------------------------
+--------Protocols--------------
+-------------------------------
+
+--------Timer---------------
+MODULE protocol_timing(resetValue, resetFlag)
+	VAR time: -1..100;
+	INIT time = -1
+	TRANS TRUE -> next(time) = (resetFlag ? resetValue : ( time > -1 ? time -1 :time));
+	DEFINE timeout := (time = 0);
+	
+--------Custom protocols------
+MODULE protocol_ClientMain(conjugated, msg, param)
+	DEFINE
+		out_request := (conjugated = FALSE & msg = request);
+		in_reply := (conjugated = TRUE & msg = reply);
+		
+MODULE protocol_ClientClient(conjugated, msg, param)
+	DEFINE
+		in_confirm := (conjugated = TRUE & msg = confirm);
+
+--------------------------------
+---------TOP capsule------------
+--------------------------------
+
+MODULE main
+    VAR
+        msgPtr_default: 0..5;
+        sensor1: capsule_sensor1(TURN_sensor1, ctrl1.port_sensor, mainCtrl.port_sensor1);
+        sensor2: capsule_sensor2(TURN_sensor2, ctrl2.port_sensor, mainCtrl.port_sensor2);
+        ctrl1: capsule_controller1(TURN_ctrl1, mainCtrl.port_controller1);
+        ctrl2: capsule_controller2(TURN_ctrl2, mainCtrl.port_controller2);
+        mainCtrl: capsule_mainController(TURN_mainCtrl, sensor1.port_mainController, sensor2.port_mainController);
+    INIT msgPtr_default = 0
+    ASSIGN
+        next(msgPtr_default) := case
+        	sensor1.WAITING & FREE: 1;
+        	sensor2.WAITING & FREE : 2;
+        	ctrl1.WAITING & FREE: 3;
+        	ctrl2.WAITING & FREE: 4;
+        	mainCtrl.WAITING & FREE : 5;
+        	TRUE : 0;
+        esac;
+    DEFINE
+     	FREE := (msgPtr_default = 0);
+     	TURN_sensor1 := (msgPtr_default = 1);
+     	TURN_sensor2 := (msgPtr_default = 2);
+     	TURN_ctrl1 := (msgPtr_default = 3);
+     	TURN_ctrl2 := (msgPtr_default = 4);
+     	TURN_mainCtrl := (msgPtr_default = 5);
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+------- Property top capsule -------
+------- If a line have package, it will eventually drop package on the main line and return to waiting package state or end completely
+LTLSPEC G(sensor1.state=s_waitCtrl -> F ((mainCtrl.state=wait_request1_countDown1)|(mainCtrl.state=wait_request12))-> (F ctrl1.state=s_countDown) ->  (F sensor1.state=s_end)|(F sensor1.state=s_waitPackage)) --good
+LTLSPEC G(sensor2.state=s_waitCtrl -> F ((mainCtrl.state=wait_request2_countDown2)|(mainCtrl.state=wait_request12))-> (F ctrl2.state=s_countDown) ->  (F sensor2.state=s_end)|(F sensor2.state=s_waitPackage)) --good
+
+
+
+
+------- Property sensor 1/2 capsule ------------------------------------------------------------------------------------
+------- If sensor send message to Main Controller, it will eventually receive message from Controller (Controller 1/2)
+LTLSPEC G(sensor1.msg_Main = request -> F(sensor1.inController1.in_confirm)) --good
+LTLSPEC G(sensor2.msg_Main = request -> F(sensor2.inController2.in_confirm)) --good
+
+------- If sensor receive message from Main Controller, it will send a request again to Main Controller after that
+------- (in the time between, it will not receive any message from controller) (3,4)
+LTLSPEC G(sensor1.inMainController.in_reply -> (X sensor1.state=wait_t3_waitCtrl & F(sensor1.port_mainController.out_request & sensor1.state=s_waitCtrl)))
+LTLSPEC G(sensor1.state=wait_t3_waitCtrl -> !sensor1.inController1.in_confirm)
+LTLSPEC G(sensor2.inMainController.in_reply -> (X sensor2.state=wait_t3_waitCtrl & F(sensor2.port_mainController.out_request & sensor2.state=s_waitCtrl)))
+LTLSPEC G(sensor2.state=wait_t3_waitCtrl -> !sensor2.inController2.in_confirm)
+
+------- If sensor send message to Main Controller, it will eventually go back to waitPackage state or end state. (3,4)
+LTLSPEC G(sensor1.port_mainController.out_request -> F(sensor1.state = s_waitPackage | sensor1.state = s_end)) --good
+LTLSPEC G(sensor2.port_mainController.out_request -> F(sensor2.state = s_waitPackage | sensor2.state = s_end)) --good
+
+------- Sensor only sends out request to main controller when it is in waitPackage state or waitToRequestAgain state (8)
+LTLSPEC G(sensor1.port_mainController.out_request -> Y(sensor1.state=s_waitPackage | sensor1.state=wait_t3_waitCtrl))
+LTLSPEC G(sensor2.port_mainController.out_request -> Y(sensor2.state=s_waitPackage | sensor2.state=wait_t3_waitCtrl))
+
+------- If sensor in end state, it will not send out any other requests and receive any messages from controller/main controller
+LTLSPEC (sensor1.state = s_end -> G(!sensor1.port_mainController.out_request & !sensor1.inController1.in_confirm & !sensor1.inMainController.in_reply)) --good
+LTLSPEC (sensor2.state = s_end -> G(!sensor2.port_mainController.out_request & !sensor2.inController2.in_confirm & !sensor2.inMainController.in_reply)) --good
+
+------- Sensor does not receive message from controller and main controller at the same time
+LTLSPEC G(!(sensor1.inMainController.in_reply & sensor1.inController1.in_confirm))
+LTLSPEC G(!(sensor2.inMainController.in_reply & sensor2.inController2.in_confirm))
+
+------- If all the package still not be loaded, the sensor will continue to send the request
+LTLSPEC G(sensor1.state = p_canEnd & !(X sensor1.state = s_end) -> F (sensor1.msg_Main = request))
+LTLSPEC G(sensor2.state = p_canEnd & !(X sensor2.state = s_end) -> F (sensor2.msg_Main = request))
+
+------- Sensor can only send request message to Main controller
+LTLSPEC G(sensor1.msg_Main = null | sensor1.msg_Main = request) --good
+LTLSPEC G(sensor2.msg_Main = null | sensor2.msg_Main = request) --good
+
+
+
+
+------- Property controllers -------
+-----Controller only countdown after have reply from Main Controller
+LTLSPEC G(ctrl1.inMain.in_reply ->X(ctrl1.state=s_countDown)) 			--good
+LTLSPEC G(ctrl2.inMain.in_reply ->X(ctrl2.state=s_countDown)) 			--good
+LTLSPEC G(ctrl1.state=s_countDown ->Y((ctrl1.inMain.in_reply&ctrl1.state!=s_countDown)|(ctrl1.state=s_countDown))) 			--good
+LTLSPEC G(ctrl2.state=s_countDown ->Y((ctrl2.inMain.in_reply&ctrl2.state!=s_countDown)|(ctrl2.state=s_countDown))) 			--good
+
+----Controller only send confirm message to sensor when timer timeout
+LTLSPEC G(ctrl1.portTimer.timeout ->X(ctrl1.msg_sensor=confirm) ) 			--good
+LTLSPEC G(ctrl2.portTimer.timeout ->X(ctrl2.msg_sensor=confirm) ) 			--good
+LTLSPEC G(ctrl1.msg_sensor=confirm ->Y(ctrl1.portTimer.timeout)) 			--good
+LTLSPEC G(ctrl2.msg_sensor=confirm ->Y(ctrl2.portTimer.timeout)) 			--good
+
+----If controller receives a message from main controller, it will eventually send a confirmation message to the corresponding sensor. (3,4)
+LTLSPEC G(ctrl1.inMain.in_reply  -> F(ctrl1.msg_sensor=confirm))
+LTLSPEC G(ctrl2.inMain.in_reply  -> F(ctrl2.msg_sensor=confirm))
+
+----Controllers can only send confirm message to sensor
+LTLSPEC G(ctrl1.msg_sensor = null | ctrl1.msg_sensor = confirm)
+LTLSPEC G(ctrl2.msg_sensor = null | ctrl2.msg_sensor = confirm)
+
+----Controllers can only receive reply message from main controller
+LTLSPEC G(mainCtrl.msg_controller1 = null | mainCtrl.msg_controller1 = reply)
+LTLSPEC G(mainCtrl.msg_controller2 = null | mainCtrl.msg_controller2 = reply)
+
+----Counting time of controller 1 is 5 seconds
+LTLSPEC G(ctrl1.timerResetValue = -1 | ctrl1.timerResetValue = 5)
+----Counting time of controller 2 is 10 seconds
+LTLSPEC G(ctrl2.timerResetValue = -1 | ctrl2.timerResetValue = 10)
+
+
+
+
+------ Property of Main Controller ------
+-- Whenever main controller receives a message from a sensor, it will eventually send a message to the corresponding controller (take into account also resending request from sensor)
+LTLSPEC G(mainCtrl.inSensor1.out_request -> F(mainCtrl.port_controller1.in_reply));
+LTLSPEC G(mainCtrl.inSensor2.out_request -> F(mainCtrl.port_controller2.in_reply));
+
+---	Whenever main controller receives a message from a sensor when it is in countdown state, it will eventually send a message back to that sensor.
+LTLSPEC G((mainCtrl.inSensor1.out_request & mainCtrl.state=s_countDown2) -> F(mainCtrl.port_sensor1.in_reply));
+LTLSPEC G((mainCtrl.inSensor2.out_request & mainCtrl.state=s_countDown1) -> F(mainCtrl.port_sensor2.in_reply));
+
+--- Whenever main controller receives requests from 2 sensors at the same time, it will eventually send a message back to one sensor and send command to the controller of the other sensor.
+LTLSPEC G((mainCtrl.state=wait_request1_countDown1 & mainCtrl.inSensor2.out_request) -> X (mainCtrl.state=wait_request12));
+LTLSPEC G((mainCtrl.state=wait_request2_countDown2 & mainCtrl.inSensor1.out_request) -> X (mainCtrl.state=wait_request12));
+LTLSPEC G(mainCtrl.state=wait_request12 -> F((mainCtrl.port_controller2.in_reply & F mainCtrl.port_sensor1.in_reply)|(mainCtrl.port_controller1.in_reply & F mainCtrl.port_sensor2.in_reply)));
+LTLSPEC G(!(mainCtrl.port_controller2.in_reply & mainCtrl.port_controller1.in_reply));
+
+---	Main controller sends message back to a sensor only when its timer timeout.
+LTLSPEC G(mainCtrl.port_sensor1.in_reply -> Y(mainCtrl.portTimer.timeout));
+LTLSPEC G(mainCtrl.port_sensor2.in_reply -> Y(mainCtrl.portTimer.timeout));
+LTLSPEC G(!mainCtrl.portTimer.timeout -> X(!mainCtrl.port_sensor1.in_reply & !mainCtrl.port_sensor2.in_reply));
+
+---	The main controller only reset its timer when it receives a request from sensor.
+LTLSPEC G(mainCtrl.timerResetFlag -> O(mainCtrl.inSensor1.out_request | mainCtrl.inSensor2.out_request));
+
+---	The main controller only goes back to waiting state when its timer timeout
+LTLSPEC G(mainCtrl.portTimer.timeout -> X(mainCtrl.state=s_idle));
+LTLSPEC ((mainCtrl.state=s_idle -> Y(mainCtrl.state=p_initial)) | (mainCtrl.state=s_idle -> Y(mainCtrl.portTimer.timeout)));
+LTLSPEC G(mainCtrl.state=s_idle -> Y (mainCtrl.state=s_idle | mainCtrl.state=p_initial | mainCtrl.portTimer.timeout));
+
+---	The main controller only sends out command to controller when it is in waiting state
+LTLSPEC G(mainCtrl.port_controller1.in_reply -> Y(mainCtrl.state=wait_request1_countDown1 | mainCtrl.state=wait_request12));
+LTLSPEC G(mainCtrl.port_controller2.in_reply -> Y(mainCtrl.state=wait_request2_countDown2 | mainCtrl.state=wait_request12));
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+--------------------------------
+---------MainController---------
+--------------------------------
+MODULE capsule_mainController(myTurn, inSensor1, inSensor2)
+ VAR
+	state : {p_initial, s_idle, wait_request1_countDown1, s_countDown1, wait_request2_countDown2, s_countDown2, s_make1RequestAgain, s_make2RequestAgain, wait_request12};
+
+	port_controller1 : protocol_ClientMain(TRUE, msg_controller1, 0);
+	msg_controller1 : {null, reply};
+	port_controller2 : protocol_ClientMain(TRUE, msg_controller2, 0);
+	msg_controller2 : {null, reply};
+	port_sensor1 : protocol_ClientMain(TRUE, msg_sensor1, 0);
+	msg_sensor1 : {null, reply};
+	port_sensor2 : protocol_ClientMain(TRUE, msg_sensor2, 0);
+	msg_sensor2 : {null, reply};
+
+	portTimer: protocol_timing(timerResetValue,timerResetFlag);
+	timerResetValue: -1..100;
+	timerResetFlag : boolean;
+
+	chooseS2: boolean;
+
+
+ INIT
+	state = p_initial
+	& msg_controller1 = null
+	& msg_controller2 = null
+	& msg_sensor1 = null
+	& msg_sensor2 = null
+	& timerResetValue = -1
+	& timerResetFlag = FALSE
+	& chooseS2 = TRUE
+
+
+ DEFINE
+	WAITING:= (state = wait_request1_countDown1)|(state = wait_request2_countDown2)|(state=wait_request12);
+	T1:= (state = p_initial);
+
+	T2a:= (state = s_idle & inSensor1.out_request & !inSensor2.out_request);
+	T2b:= (state = wait_request1_countDown1 & myTurn & !inSensor2.out_request);
+
+	T3a:= (state = s_idle & inSensor2.out_request & !inSensor1.out_request);
+	T3b:= (state = wait_request2_countDown2 & myTurn & !inSensor1.out_request);
+
+	T4:= (state = s_countDown1 & inSensor2.out_request);  --& !portTimer.timeout);
+	T5:= (state = s_countDown2 & inSensor1.out_request);  --& !portTimer.timeout);
+	T6:= (state = s_countDown1 & portTimer.timeout); --& !inSensor2.out_request
+	T7:= (state = s_countDown2 & portTimer.timeout); --& !inSensor1.out_request
+	T8:= (state = s_make2RequestAgain & portTimer.timeout);
+	T9:= (state = s_make1RequestAgain & portTimer.timeout);
+	T10a:= (state =  s_idle & inSensor1.out_request & inSensor2.out_request);
+    T10b:= (state = wait_request12 & myTurn & chooseS2);
+    T10c:= (state = wait_request12 & myTurn & !chooseS2);
+
+    T11:= (state = wait_request1_countDown1 & inSensor2.out_request);
+    T12:= (state = wait_request2_countDown2 & inSensor1.out_request);
+
+
+
+
+    t_none := !(T1 | T2a | T2b | T3a | T3b | T4 | T5 | T6 | T7 | T8 | T9 | T10a | T10b | T10c | T11 | T12);
+ ASSIGN
+	next(timerResetValue):= case
+		t_none | T1 | T2a | T3a | T4 | T5 | T6 | T7 | T8 | T9 | T10a | T11 | T12: -1;
+		T2b | T3b | T10b | T10c: 5;
+	esac;
+	next(timerResetFlag):= case
+		t_none | T1 | T2a | T3a | T4 | T5 | T6 | T7 | T8 | T9 | T10a | T11 | T12: FALSE;
+    	T2b | T3b | T10b | T10c: TRUE;
+	esac;
+	next(msg_sensor1) := case
+		T9: reply;
+		t_none | T1 | T2a | T2b | T3a | T3b | T4 | T5 | T6 | T7 | T8 | T10a | T10b | T10c | T11 | T12: null;
+	esac;
+	next(msg_sensor2) := case
+		T8: reply;
+		t_none | T1 | T2a | T2b | T3a | T3b | T4 | T5 | T6 | T7 | T9 | T10a | T10b | T10c | T11 | T12: null;
+	esac;
+	next(msg_controller1) := case
+		T2b | T10c: reply;
+    	t_none | T1 | T2a | T3a | T3b | T4 | T5 | T6 | T7 | T8 | T9 | T10a | T10b | T11 | T12: null;
+	esac;
+	next(msg_controller2) := case
+		T3b | T10b: reply;
+		t_none | T1 | T2a | T2b | T3a | T4 | T5 | T6 | T7 | T8 | T9 | T10a | T10c | T11 | T12: null;
+	esac;
+	next(chooseS2) := case
+    	    T10b | T10c: !chooseS2;
+    	    t_none | T1 | T2a | T2b | T3a | T3b | T4 | T5 | T6 | T7 | T8 | T9 | T10a | T11 | T12: chooseS2;
+    esac;
+
+ INVAR ( t_none
+	| (T1 & !T2a & !T2b & !T3a & !T3b & !T4 & !T5 & !T6 & !T7 & !T8 & !T9 & !T10a & !T10b & !T10c & !T11 & !T12)
+	| (!T1 & T2a & !T2b & !T3a & !T3b & !T4 & !T5 & !T6 & !T7 & !T8 & !T9 & !T10a & !T10b & !T10c & !T11 & !T12)
+	| (!T1 & !T2a & T2b & !T3a & !T3b & !T4 & !T5 & !T6 & !T7 & !T8 & !T9 & !T10a & !T10b & !T10c & !T11 & !T12)
+	| (!T1 & !T2a & !T2b & T3a & !T3b & !T4 & !T5 & !T6 & !T7 & !T8 & !T9 & !T10a & !T10b & !T10c & !T11 & !T12)
+	| (!T1 & !T2a & !T2b & !T3a & T3b & !T4 & !T5 & !T6 & !T7 & !T8 & !T9 & !T10a & !T10b & !T10c & !T11 & !T12)
+	| (!T1 & !T2a & !T2b & !T3a & !T3b & T4 & !T5 & !T6 & !T7 & !T8 & !T9 & !T10a & !T10b & !T10c & !T11 & !T12)
+	| (!T1 & !T2a & !T2b & !T3a & !T3b & !T4 & T5 & !T6 & !T7 & !T8 & !T9 & !T10a & !T10b & !T10c & !T11 & !T12)
+	| (!T1 & !T2a & !T2b & !T3a & !T3b & !T4 & !T5 & T6 & !T7 & !T8 & !T9 & !T10a & !T10b & !T10c & !T11 & !T12)
+	| (!T1 & !T2a & !T2b & !T3a & !T3b & !T4 & !T5 & !T6 & T7 & !T8 & !T9 & !T10a & !T10b & !T10c & !T11 & !T12)
+	| (!T1 & !T2a & !T2b & !T3a & !T3b & !T4 & !T5 & !T6 & !T7 & T8 & !T9 & !T10a & !T10b & !T10c & !T11 & !T12)
+	| (!T1 & !T2a & !T2b & !T3a & !T3b & !T4 & !T5 & !T6 & !T7 & !T8 & T9 & !T10a & !T10b & !T10c & !T11 & !T12)
+	| (!T1 & !T2a & !T2b & !T3a & !T3b & !T4 & !T5 & !T6 & !T7 & !T8 & !T9 & T10a & !T10b & !T10c & !T11 & !T12)
+	| (!T1 & !T2a & !T2b & !T3a & !T3b & !T4 & !T5 & !T6 & !T7 & !T8 & !T9 & !T10a & T10b & !T10c & !T11 & !T12)
+	| (!T1 & !T2a & !T2b & !T3a & !T3b & !T4 & !T5 & !T6 & !T7 & !T8 & !T9 & !T10a & !T10b & T10c & !T11 & !T12)
+	| (!T1 & !T2a & !T2b & !T3a & !T3b & !T4 & !T5 & !T6 & !T7 & !T8 & !T9 & !T10a & !T10b & !T10c & T11 & !T12)
+	| (!T1 & !T2a & !T2b & !T3a & !T3b & !T4 & !T5 & !T6 & !T7 & !T8 & !T9 & !T10a & !T10b & !T10c & !T11 & T12)
+	);
+ TRANS t_none -> next(state) = state;
+ TRANS T1 -> next(state) = s_idle;
+ TRANS T2a -> next(state) = wait_request1_countDown1;
+ TRANS T2b -> next(state) = s_countDown1;
+ TRANS T3a -> next(state) = wait_request2_countDown2;
+ TRANS T3b -> next(state) = s_countDown2;
+ TRANS T4 -> next(state) = s_make2RequestAgain;
+ TRANS T5 -> next(state) = s_make1RequestAgain;
+ TRANS T6 -> next(state) = s_idle;
+ TRANS T7 -> next(state) = s_idle;
+ TRANS T8 -> next(state) = s_idle;
+ TRANS T9 -> next(state) = s_idle;
+ TRANS T10a -> next(state) = wait_request12;
+ TRANS T10b -> next(state) = s_make1RequestAgain;
+ TRANS T10c -> next(state) = s_make2RequestAgain;
+
+ TRANS T11 -> next(state) = wait_request12;
+ TRANS T12 -> next(state) = wait_request12;
+
+--------------------------------
+---------Controller1------------
+--------------------------------
+ 
+MODULE capsule_controller1(myTurn, inMain)
+ VAR
+	state : {p_initial, s_waitMain, s_countDown};
+	port_sensor : protocol_ClientClient(TRUE, msg_sensor, 0);
+	msg_sensor : {null, confirm}; 
+	portTimer: protocol_timing(timerResetValue,timerResetFlag);
+	timerResetValue: -1..100;
+	timerResetFlag : boolean;	
+ INIT
+	state = p_initial
+	& msg_sensor = null
+	& timerResetValue = -1
+	& timerResetFlag = FALSE
+ DEFINE
+    WAITING:= FALSE;
+	T1:= (state = p_initial);
+	T2:= (state = s_waitMain & inMain.in_reply);
+	T3:= (state = s_countDown & portTimer.timeout);
+	t_none := !(T1 | T2 | T3);
+ ASSIGN
+	next(timerResetValue):= case
+		t_none | T1 | T3: -1;
+		T2 : 5;
+	esac;
+	next(timerResetFlag):= case
+		t_none | T1 | T3: FALSE;
+		T2 : TRUE;
+	esac;
+	next(msg_sensor) := case
+		T3: confirm;
+		t_none | T1 | T2 : null;
+	esac;
+
+ INVAR ( t_none
+	| (T1 & !T2 & !T3)
+	| (!T1 & T2 & !T3)
+	| (!T1 & !T2 & T3)
+	);
+
+ TRANS t_none -> next(state) = state;
+ TRANS T1 -> next(state) = s_waitMain;
+ TRANS T2 -> next(state) = s_countDown;
+ TRANS T3 -> next(state) = s_waitMain;
+
+--------------------------------
+---------Controller2------------
+--------------------------------
+MODULE capsule_controller2(myTurn, inMain)
+ VAR
+	state : {p_initial, s_waitMain, s_countDown};
+	port_sensor : protocol_ClientClient(TRUE, msg_sensor, 0);
+	msg_sensor : {null, confirm};
+	portTimer: protocol_timing(timerResetValue,timerResetFlag);
+	timerResetValue: -1..100;
+	timerResetFlag : boolean;
+ INIT
+	state = p_initial
+	& msg_sensor = null
+	& timerResetValue = -1
+	& timerResetFlag = FALSE
+ DEFINE
+    WAITING:= FALSE;
+	T1:= (state = p_initial);
+	T2:= (state = s_waitMain & inMain.in_reply);
+	T3:= (state = s_countDown & portTimer.timeout);
+	t_none := !(T1 | T2 | T3);
+ ASSIGN
+	next(timerResetValue):= case
+		t_none | T1 | T3: -1;
+		T2 : 10;
+	esac;
+	next(timerResetFlag):= case
+		t_none | T1 | T3: FALSE;
+		T2 : TRUE;
+	esac;
+	next(msg_sensor) := case
+		T3: confirm;
+		t_none | T1 | T2 : null;
+	esac;
+
+ INVAR ( t_none
+	| (T1 & !T2 & !T3)
+	| (!T1 & T2 & !T3)
+	| (!T1 & !T2 & T3)
+	);	
+
+ TRANS t_none -> next(state) = state;
+ TRANS T1 -> next(state) = s_waitMain;
+ TRANS T2 -> next(state) = s_countDown;
+ TRANS T3 -> next(state) = s_waitMain;
+ 
+-------------------------------------------
+------------Sensor1------------------------
+-------------------------------------------
+MODULE capsule_sensor1(myTurn, inController1, inMainController)
+	VAR
+		state: {p_initial, s_waitPackage, s_waitCtrl, wait_t3_waitCtrl, p_canEnd, s_end};
+		port_mainController: protocol_ClientMain(FALSE, msg_Main, 0);
+		msg_Main : {null, request};
+
+		timer: protocol_timing(timerResetValue, timerResetFlag);
+		timerResetValue: -1..100;
+		timerResetFlag: boolean;
+
+		hitCount: 1 .. 7;
+
+	INIT
+		state = p_initial
+		& msg_Main = null
+		& timerResetValue = -1
+		& timerResetFlag = FALSE
+		& hitCount = 1
+
+	DEFINE
+		WAITING := (state = wait_t3_waitCtrl);
+		T1  := (state = p_initial);
+		T2  := (state = s_waitPackage & timer.timeout);
+		T3a := (state = s_waitCtrl & inMainController.in_reply);
+		T3b := (state = wait_t3_waitCtrl & myTurn);
+		T4  := (state = s_waitCtrl & inController1.in_confirm);
+		T5  := (state = wait_t3_waitCtrl & inController1.in_confirm);
+		T6  := (state = p_canEnd & guard_t6);
+		T7  := (state = p_canEnd & !guard_t6);
+		guard_t6:= (hitCount < 7);
+		t_none := !(T1 | T2 | T3a | T3b | T4 | T5 | T6 | T7);
+
+	INVAR (t_none
+		| (T1 & !T2 & !T3a & !T3b & !T4 & !T5 & !T6 & !T7)
+		| (!T1 & T2 & !T3a & !T3b & !T4 & !T5 & !T6 & !T7)
+		| (!T1 & !T2 & T3a & !T3b & !T4 & !T5 & !T6 & !T7)
+		| (!T1 & !T2 & !T3a & T3b & !T4 & !T5 & !T6 & !T7)
+		| (!T1 & !T2 & !T3a & !T3b & T4 & !T5 & !T6 & !T7)
+		| (!T1 & !T2 & !T3a & !T3b & !T4 & T5 & !T6 & !T7)
+		| (!T1 & !T2 & !T3a & !T3b & !T4 & !T5 & T6 & !T7)
+		| (!T1 & !T2 & !T3a & !T3b & !T4 & !T5 & !T6 & T7)
+		);
+
+	TRANS t_none 	-> (next(state) = state				& next(hitCount) = hitCount);
+	TRANS T1 		-> (next(state) = s_waitPackage 	& next(hitCount) = hitCount);
+	TRANS T2 		-> (next(state) = s_waitCtrl		& next(hitCount) = hitCount);
+	TRANS T3a 		-> (next(state) = wait_t3_waitCtrl 	& next(hitCount) = hitCount);
+	TRANS T3b 		-> (next(state) = s_waitCtrl		& next(hitCount) = hitCount);
+	TRANS T4		-> (next(state) = p_canEnd			& next(hitCount) = hitCount);
+	TRANS T5		-> (next(state) = p_canEnd			& next(hitCount) = hitCount);
+	TRANS T6 		-> (next(state) = s_waitPackage		& next(hitCount) = hitCount+1);
+	TRANS T7		-> (next(state) = s_end				& next(hitCount) = hitCount);
+
+	ASSIGN
+	next(msg_Main) := 			case
+									T2 | T3b: request;
+									t_none | T1 | T3a | T4 | T5 | T6 | T7: null;
+								esac;
+						
+						
+	next(timerResetValue) := 	case	
+									T1: {1, 2, 3}; 				-- rand()%3 ...use simulate -r option to randomly pick, else it picks 1st choice always.
+									T6: {1, 2, 3, 4, 5, 6, 7}; 	-- rand()%7 ...use simulate -r option to randomly pick, else it picks 1st choice always.
+									t_none | T2 | T3a | T3b | T4 | T5 | T7: -1;
+								esac;
+
+	next(timerResetFlag) := 	case
+									T1 | T6: TRUE;
+									t_none | T2 | T3a | T3b | T4 | T5 | T7: FALSE;
+								esac;
+
+
+-------------------------------------------
+------------Sensor2------------------------
+-------------------------------------------
+MODULE capsule_sensor2(myTurn, inController2, inMainController)
+	VAR
+		state: {p_initial, s_waitPackage, s_waitCtrl, wait_t3_waitCtrl, p_canEnd, s_end};
+		port_mainController: protocol_ClientMain(FALSE, msg_Main, 0);
+		msg_Main : {null, request};
+
+		timer: protocol_timing(timerResetValue, timerResetFlag);
+		timerResetValue: -1..100;
+		timerResetFlag: boolean;
+
+		hitCount: 1 .. 7;
+
+	INIT
+		state = p_initial
+		& msg_Main = null
+		& timerResetValue = -1
+		& timerResetFlag = FALSE
+		& hitCount = 1
+
+	DEFINE
+		WAITING := (state = wait_t3_waitCtrl);
+		T1  := (state = p_initial);
+		T2  := (state = s_waitPackage & timer.timeout);
+		T3a := (state = s_waitCtrl & inMainController.in_reply);
+		T3b := (state = wait_t3_waitCtrl & myTurn);
+		T4  := (state = s_waitCtrl & inController2.in_confirm);
+		T5  := (state = wait_t3_waitCtrl & inController2.in_confirm);
+		T6  := (state = p_canEnd & guard_t6);
+		T7  := (state = p_canEnd & !guard_t6);
+		guard_t6:= (hitCount < 7);
+		t_none := !(T1 | T2 | T3a | T3b | T4 | T5 | T6 | T7);
+
+	INVAR (t_none
+		| (T1 & !T2 & !T3a & !T3b & !T4 & !T5 & !T6 & !T7)
+		| (!T1 & T2 & !T3a & !T3b & !T4 & !T5 & !T6 & !T7)
+		| (!T1 & !T2 & T3a & !T3b & !T4 & !T5 & !T6 & !T7)
+		| (!T1 & !T2 & !T3a & T3b & !T4 & !T5 & !T6 & !T7)
+		| (!T1 & !T2 & !T3a & !T3b & T4 & !T5 & !T6 & !T7)
+		| (!T1 & !T2 & !T3a & !T3b & !T4 & T5 & !T6 & !T7)
+		| (!T1 & !T2 & !T3a & !T3b & !T4 & !T5 & T6 & !T7)
+		| (!T1 & !T2 & !T3a & !T3b & !T4 & !T5 & !T6 & T7)
+		);
+
+	TRANS t_none 	-> (next(state) = state				& next(hitCount) = hitCount);
+	TRANS T1 		-> (next(state) = s_waitPackage 	& next(hitCount) = hitCount);
+	TRANS T2 		-> (next(state) = s_waitCtrl		& next(hitCount) = hitCount);
+	TRANS T3a 		-> (next(state) = wait_t3_waitCtrl 	& next(hitCount) = hitCount);
+	TRANS T3b 		-> (next(state) = s_waitCtrl		& next(hitCount) = hitCount);
+	TRANS T4		-> (next(state) = p_canEnd			& next(hitCount) = hitCount);
+	TRANS T5		-> (next(state) = p_canEnd			& next(hitCount) = hitCount);
+	TRANS T6 		-> (next(state) = s_waitPackage		& next(hitCount) = hitCount+1);
+	TRANS T7		-> (next(state) = s_end				& next(hitCount) = hitCount);
+
+	ASSIGN
+	next(msg_Main) := 			case
+									T2 | T3b: request;
+									t_none | T1 | T3a | T4 | T5 | T6 | T7: null;
+								esac;
+
+
+	next(timerResetValue) := 	case
+									T1: {1, 2, 3}; 				-- rand()%3 ...use simulate -r option to randomly pick, else it picks 1st choice always.
+									T6: {1, 2, 3, 4, 5, 6, 7}; 	-- rand()%7 ...use simulate -r option to randomly pick, else it picks 1st choice always.
+									t_none | T2 | T3a | T3b | T4 | T5 | T7: -1;
+								esac;
+
+	next(timerResetFlag) := 	case
+									T1 | T6: TRUE;
+									t_none | T2 | T3a | T3b | T4 | T5 | T7: FALSE;
+								esac;
+
+    ------- If sensor in waitCtrl state, it will not send out any other requests until receiving message from controller or main controller. (8)
+    --LTLSPEC G(msg_Main = request & state = s_waitCtrl -> F (msg_Main = null U (inController2.in_confirm)))
